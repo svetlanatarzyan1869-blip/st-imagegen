@@ -1,0 +1,12 @@
+{
+  "display_name": "ImageGen (proxy)",
+  "loading_order": 15,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "",
+  "author": "Svetlyachok",
+  "version": "0.1.0",
+  "homePage": "",
+  "auto_update": true
+}
