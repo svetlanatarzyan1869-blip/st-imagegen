@@ -140,7 +140,16 @@ function saveErrReport(kind, r, bodyText, info, exc, url) {
 async function generateFor(eng, chars, url) {
   // url необязателен (для ручного теста передаём готовый)
   const u = url || buildUrl(eng, chars);
-  const r = await fetch(u);
+  console.log('[ImageGen] GET', u);
+  let r;
+  try {
+    r = await fetch(u);
+  } catch (e) {
+    // В браузере частая причина: CORS при следовании 302 на хост картинки (i.ibb.co).
+    // Генерация при этом обычно УСПЕШНА — отдаём URL прокси, <img> сам пройдёт редирект.
+    console.warn('[ImageGen] fetch threw (вероятно CORS на редиректе) → отдаю URL прокси напрямую:', e && e.message);
+    return u;
+  }
   const errHdr = r.headers.get('X-ImageGen-Error');
   if (errHdr) {
     const info = b64dJson(errHdr) || {};
@@ -153,21 +162,24 @@ async function generateFor(eng, chars, url) {
     saveErrReport('http_' + r.status, r, body, null, null, u);
     throw new Error('Запрос не удался (HTTP ' + r.status + ')');
   }
-  return r.url; // после 302 = финальный URL картинки (ImgBB)
+  console.log('[ImageGen] resolved image URL:', r.url);
+  return r.url || u; // после 302 = финальный URL картинки (ImgBB); если пусто — URL прокси
 }
 
 function attachImage(mesId, imageUrl, title) {
   const c = ctx(); if (!c) return;
   const message = c.chat[mesId];
-  if (!message) return;
+  if (!message) { console.warn('[ImageGen] нет сообщения с id', mesId); return; }
   if (!message.extra) message.extra = {};
   message.extra.image = imageUrl;
   message.extra.title = title || '';
   message.extra.inline_image = true;
+  const el = $('#chat').find('.mes[mesid="' + mesId + '"]');
+  console.log('[ImageGen] attach → mesId', mesId, '| DOM-элемент найден:', el.length, '| url:', imageUrl);
   try {
-    const el = $('#chat').find('.mes[mesid="' + mesId + '"]');
-    c.appendMediaToMessage(message, el);
-  } catch (e) { console.error('[ImageGen] appendMediaToMessage:', e); }
+    if (typeof c.appendMediaToMessage === 'function') { c.appendMediaToMessage(message, el); console.log('[ImageGen] appendMediaToMessage вызван'); }
+    else console.warn('[ImageGen] appendMediaToMessage отсутствует в getContext()');
+  } catch (e) { console.error('[ImageGen] appendMediaToMessage error:', e); }
   try { c.saveChat(); } catch (e) {}
 }
 
