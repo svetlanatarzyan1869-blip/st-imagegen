@@ -26,6 +26,13 @@ const DEFAULTS = {
   lastError: ''
 };
 
+// Прокси по провайдерам (baseUrl подставляется при смене провайдера).
+const BASE_URLS = {
+  link: 'https://linkapi-proxy-imgbb-key-cache.vercel.app/api/generate',
+  naistera: 'https://naistera.vercel.app/api/generate',
+  pollinations: 'https://pollinations-tavo.vercel.app/api/generate'
+};
+
 // Списки моделей по провайдерам (для выпадашки). Совпадают с сайтом-конструктором.
 const MODELS = {
   link: ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview', 'gemini-3-pro-image', 'gemini-2.5-flash-image', 'pro/gemini-3.1-flash-image-preview', 'pro/gemini-3-pro-image-preview', 'pro/gemini-2.5-flash-image', 'gpt-image-2', 'gpt-image-2-c'],
@@ -264,7 +271,12 @@ function injectSettingsUI() {
 
   $('#imagegen_enabled').prop('checked', s.enabled).on('input', function () { settings().enabled = $(this).prop('checked'); saveSettings(); });
   $('#imagegen_baseurl').val(s.baseUrl).on('input', function () { settings().baseUrl = $(this).val(); saveSettings(); });
-  $('#imagegen_provider').val(s.provider).on('change', function () { settings().provider = $(this).val(); saveSettings(); populateModels(); });
+  $('#imagegen_provider').val(s.provider).on('change', function () {
+    const p = $(this).val();
+    settings().provider = p;
+    if (BASE_URLS[p]) { settings().baseUrl = BASE_URLS[p]; $('#imagegen_baseurl').val(BASE_URLS[p]); }
+    saveSettings(); populateModels();
+  });
   $('#imagegen_model').on('change', function () { settings().model = $(this).val(); saveSettings(); });
   $('#imagegen_style').val(s.style).on('input', function () { settings().style = $(this).val(); saveSettings(); });
   $('#imagegen_userid').val(s.userId).on('input', function () { settings().userId = $(this).val(); saveSettings(); });
