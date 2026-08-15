@@ -170,12 +170,18 @@ function attachImage(mesId, imageUrl, title) {
   const c = ctx(); if (!c) return;
   const message = c.chat[mesId];
   if (!message) { console.warn('[ImageGen] нет сообщения с id', mesId); return; }
-  if (!message.extra) message.extra = {};
-  message.extra.image = imageUrl;
-  message.extra.title = title || '';
+  if (!message.extra || typeof message.extra !== 'object') message.extra = {};
+
+  // Актуальный ST: картинки живут в массиве extra.media (extra.image устарел → варнинг).
+  const media = { url: imageUrl, title: title || message.mes || '', type: 'image', generation_type: 6 };
+  if (!Array.isArray(message.extra.media)) message.extra.media = [];
+  if (!message.extra.media.length && !message.extra.media_display) message.extra.media_display = 'gallery';
+  message.extra.media.push(media);
+  message.extra.media_index = message.extra.media.length - 1;
   message.extra.inline_image = true;
+
   const el = $('#chat').find('.mes[mesid="' + mesId + '"]');
-  console.log('[ImageGen] attach → mesId', mesId, '| DOM-элемент найден:', el.length, '| url:', imageUrl);
+  console.log('[ImageGen] attach → mesId', mesId, '| el:', el.length, '| media items:', message.extra.media.length, '| url:', imageUrl);
   try {
     if (typeof c.appendMediaToMessage === 'function') { c.appendMediaToMessage(message, el); console.log('[ImageGen] appendMediaToMessage вызван'); }
     else console.warn('[ImageGen] appendMediaToMessage отсутствует в getContext()');
