@@ -260,8 +260,7 @@ const processed = new Set();
 let autoCounter = 0;
 async function handleMessage(mesId) {
   const s = settings();
-  console.log('[ImageGen] handleMessage mesId', mesId, '| mode', s.mode, '| enabled', s.enabled);
-  if (!s.enabled) { console.log('[ImageGen] skip: выключено'); return; }
+  console.log('[ImageGen] handleMessage mesId', mesId, '| mode', s.mode);
   const c = ctx(); if (!c) return;
   const message = c.chat[mesId];
   if (!message || message.is_user || message.is_system) { console.log('[ImageGen] skip: не сообщение бота'); return; }
@@ -358,7 +357,6 @@ function injectSettingsUI() {
       <div class="inline-drawer-toggle inline-drawer-header"><b>ImageGen (proxy)</b>
         <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
       <div class="inline-drawer-content">
-        <label class="checkbox_label"><input id="imagegen_enabled" type="checkbox"> Включено</label>
         <label>Режим</label>
         <select id="imagegen_mode" class="text_pole">
           <option value="auto">Авто (картинка из ответа бота — карточку не трогать)</option>
@@ -406,7 +404,6 @@ function injectSettingsUI() {
   </div>`;
   $('#extensions_settings2').append(html);
 
-  $('#imagegen_enabled').prop('checked', s.enabled).on('input', function () { settings().enabled = $(this).prop('checked'); saveSettings(); });
   $('#imagegen_mode').val(s.mode).on('change', function () { settings().mode = $(this).val(); saveSettings(); });
   $('#imagegen_every').val(String(s.autoEvery)).on('change', function () { settings().autoEvery = parseInt($(this).val(), 10) || 1; saveSettings(); });
   $('#imagegen_provider').val(s.provider).on('change', function () { const p = $(this).val(); settings().provider = p; if (BASE_URLS[p]) settings().baseUrl = BASE_URLS[p]; saveSettings(); populateModels(); });
