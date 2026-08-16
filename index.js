@@ -215,7 +215,7 @@ function firstSentence(text) {
 // Лоадер-плейсхолдер (крутится + текст). Спиннер через класс (keyframes в <head>).
 function loadingBlock(token) {
   return '<div data-ig="' + token + '" style="max-width:340px;margin:12px auto;padding:22px 12px;text-align:center;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.2);border-radius:12px;">'
-    + '<span class="imagegen-spin"></span>'
+    + '<span style="display:inline-block;width:30px;height:30px;border:3px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:imagegen-rot .9s linear infinite;vertical-align:middle;"></span>'
     + '<div style="margin-top:10px;font-size:.85em;opacity:.8;">Генерирую картинку…</div></div>';
 }
 // Позиция вставки: СЕРЕДИНА прозы, после </think>, мимо тегов и ярлыков ризонинга.
@@ -464,10 +464,7 @@ jQuery(async function () {
   if (!c) { console.error('[ImageGen] SillyTavern.getContext недоступен'); return; }
   settings();
   try {
-    $('head').append('<style>'
-      + '.imagegen-spin{display:inline-block;width:30px;height:30px;border:3px solid rgba(255,255,255,.25);border-top-color:var(--SmartThemeQuoteColor,#fff);border-radius:50%;animation:imagegen-rot .9s linear infinite;vertical-align:middle;}'
-      + '@keyframes imagegen-rot{to{transform:rotate(360deg);}}'
-      + '</style>');
+    $('head').append('<style>@keyframes imagegen-rot{to{transform:rotate(360deg);}}</style>');
   } catch (e) {}
   try { injectSettingsUI(); } catch (e) { console.error('[ImageGen] settings UI:', e); }
   try { registerCommands(); } catch (e) { console.error('[ImageGen] commands:', e); }
