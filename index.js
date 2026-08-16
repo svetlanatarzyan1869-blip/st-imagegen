@@ -198,11 +198,10 @@ async function callWriter(prose) {
 
 // ── вставка markdown-картинки ИНЛАЙН в текст сообщения ──
 function mdImage(url, caption) {
-  // Рамка (figure) + опциональная подпись под картинкой.
-  const cap = String(caption || '').replace(/[<>]/g, '').trim();
-  let h = '<div class="imagegen-fig"><img class="imagegen-inline" src="' + url + '" alt="">';
-  if (cap) h += '<div class="imagegen-cap">' + cap + '</div>';
-  h += '</div>';
+  // width-атрибут переживает санитайзер ST (класс/style/div — режет). Размер задаём им, без CSS.
+  const cap = String(caption || '').replace(/[<>*]/g, '').trim();
+  let h = '<img src="' + url + '" width="330" alt="">';
+  if (cap) h += '<br><em>' + cap + '</em>';
   return h;
 }
 function firstSentence(text) {
@@ -283,6 +282,8 @@ async function handleMessage(mesId) {
     if (!eng) throw new Error('пустой промпт от райтера');
     const chars = charsFromText(prose);
     const url = await generateFor(eng, chars);
+    // убрать оставшийся маркер [IMG]…[/IMG] из текста (если модель его выдала из старой инструкции)
+    message.mes = String(message.mes || '').replace(/\[IMG\][\s\S]*?\[\/IMG\]/g, '').replace(/\n{3,}/g, '\n\n').trim();
     insertInline(mesId, message, null, url, firstSentence(prose), null);
   } catch (e) { toast('Ошибка: ' + (e.message || e) + ' — см. отчёт', 'error'); }
 }
@@ -436,13 +437,7 @@ jQuery(async function () {
   const c = ctx();
   if (!c) { console.error('[ImageGen] SillyTavern.getContext недоступен'); return; }
   settings();
-  try {
-    $('head').append('<style>'
-      + '.imagegen-fig{max-width:340px;margin:12px auto;padding:8px 8px 6px;background:var(--SmartThemeBlurTintColor,rgba(0,0,0,.18));border:1px solid var(--SmartThemeBorderColor,rgba(255,255,255,.18));border-radius:12px;box-shadow:0 3px 12px rgba(0,0,0,.4);}'
-      + '.imagegen-inline{display:block;width:100%;height:auto;max-height:60vh;object-fit:cover;border-radius:8px;cursor:pointer;}'
-      + '.imagegen-cap{margin-top:6px;font-size:.85em;line-height:1.3;opacity:.85;text-align:center;font-style:italic;}'
-      + '</style>');
-  } catch (e) {}
+  // Размер задаётся width-атрибутом на <img> (санитайзер ST режет class/style). Отдельный CSS не нужен.
   try { injectSettingsUI(); } catch (e) { console.error('[ImageGen] settings UI:', e); }
   try { registerCommands(); } catch (e) { console.error('[ImageGen] commands:', e); }
   try { c.eventSource.on(c.eventTypes.CHARACTER_MESSAGE_RENDERED, handleMessage); }
