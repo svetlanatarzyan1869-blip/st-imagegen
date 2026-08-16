@@ -189,6 +189,28 @@ function attachImage(mesId, imageUrl, title) {
   try { c.saveChat(); } catch (e) {}
 }
 
+// Создать ОТДЕЛЬНОЕ сообщение с картинкой (для /imagegen — не цепляемся к чужим кастомным карточкам).
+function addImageMessage(imageUrl, title) {
+  const c = ctx(); if (!c) return;
+  const msg = {
+    name: 'ImageGen',
+    is_user: false,
+    is_system: false,
+    send_date: (typeof c.getMessageTimeStamp === 'function' ? c.getMessageTimeStamp() : new Date().toLocaleString()),
+    mes: title || '',
+    extra: {
+      media: [{ url: imageUrl, title: title || '', type: 'image', generation_type: 6 }],
+      media_index: 0,
+      media_display: 'gallery',
+      inline_image: true
+    }
+  };
+  c.chat.push(msg);
+  console.log('[ImageGen] новое сообщение с картинкой, id', c.chat.length - 1, '| url:', imageUrl);
+  try { c.addOneMessage(c.chat[c.chat.length - 1]); } catch (e) { console.error('[ImageGen] addOneMessage:', e); }
+  try { c.saveChat(); } catch (e) {}
+}
+
 async function handleMessage(mesId) {
   const s = settings();
   if (!s.enabled) return;
@@ -320,8 +342,7 @@ function registerCommands() {
     try {
       toast('Генерирую…');
       const imgUrl = await generateFor(eng, []);
-      const mesId = c.chat.length - 1;
-      if (mesId >= 0) attachImage(mesId, imgUrl, eng);
+      addImageMessage(imgUrl, eng);
       return imgUrl;
     } catch (e) { toast('Ошибка: ' + (e && e.message ? e.message : e), 'error'); return ''; }
   };
