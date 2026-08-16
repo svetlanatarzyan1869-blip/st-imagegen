@@ -183,7 +183,8 @@ async function callWriter(prose) {
 
 // ── вставка markdown-картинки ИНЛАЙН в текст сообщения ──
 function mdImage(url, caption) {
-  return '![' + String(caption || '').replace(/[\[\]]/g, '') + '](' + url + ')';
+  // HTML-картинка с классом + width — чтобы задать размер (markdown размер не умеет).
+  return '<img class="imagegen-inline" width="320" src="' + url + '" title="' + String(caption || '').replace(/"/g, '') + '" alt="">';
 }
 function insertInline(mesId, message, mdOrReplaceFull, url, caption, replaceFull) {
   const c = ctx();
@@ -392,6 +393,7 @@ jQuery(async function () {
   const c = ctx();
   if (!c) { console.error('[ImageGen] SillyTavern.getContext недоступен'); return; }
   settings();
+  try { $('head').append('<style>.imagegen-inline{max-width:340px;max-height:62vh;width:auto !important;height:auto;border-radius:10px;display:block;margin:10px auto;cursor:pointer;}</style>'); } catch (e) {}
   try { injectSettingsUI(); } catch (e) { console.error('[ImageGen] settings UI:', e); }
   try { registerCommands(); } catch (e) { console.error('[ImageGen] commands:', e); }
   try { c.eventSource.on(c.eventTypes.CHARACTER_MESSAGE_RENDERED, handleMessage); }
