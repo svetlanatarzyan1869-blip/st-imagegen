@@ -260,20 +260,21 @@ const processed = new Set();
 let autoCounter = 0;
 async function handleMessage(mesId) {
   const s = settings();
-  if (!s.enabled) return;
+  console.log('[ImageGen] handleMessage mesId', mesId, '| mode', s.mode, '| enabled', s.enabled);
+  if (!s.enabled) { console.log('[ImageGen] skip: выключено'); return; }
   const c = ctx(); if (!c) return;
   const message = c.chat[mesId];
-  if (!message || message.is_user || message.is_system) return;
+  if (!message || message.is_user || message.is_system) { console.log('[ImageGen] skip: не сообщение бота'); return; }
   const key = mesId + ':' + (message.swipe_id != null ? message.swipe_id : 0);
-  if (processed.has(key)) return;
+  if (processed.has(key)) { console.log('[ImageGen] skip: уже обработано', key); return; }
 
-  if (!s.data) { toast('не задан DATA (настройки расширения)', 'warning'); return; }
+  if (!s.data) { console.log('[ImageGen] skip: пустой DATA'); toast('не задан DATA (настройки расширения)', 'warning'); return; }
   const token = 'ig' + Date.now();
   const ph = loadingBlock(token);
 
   if (s.mode === 'marker') {
     const parsed = parseMarker(message.mes || '');
-    if (!parsed) return;
+    if (!parsed) { console.log('[ImageGen] skip: маркер [IMG] не найден'); return; }
     processed.add(key);
     message.mes = String(message.mes || '').replace(parsed.full, ph); // маркер → лоадер
     rerender(mesId, message);
@@ -291,10 +292,12 @@ async function handleMessage(mesId) {
 
   // auto
   autoCounter++;
-  if (s.autoEvery > 1 && (autoCounter % s.autoEvery !== 0)) return;
+  if (s.autoEvery > 1 && (autoCounter % s.autoEvery !== 0)) { console.log('[ImageGen] skip: частота (счётчик', autoCounter, ')'); return; }
   const prose = stripToProse(message.mes || '');
-  if (prose.length < 30) return;
+  console.log('[ImageGen] auto: длина прозы', prose.length);
+  if (prose.length < 30) { console.log('[ImageGen] skip: проза короче 30 симв'); return; }
   processed.add(key);
+  console.log('[ImageGen] auto: старт генерации, промпт-райтер →', s.writerUrl);
   message.mes = placeInProse(String(message.mes || ''), ph); // лоадер в середину прозы
   rerender(mesId, message);
   try {
