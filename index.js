@@ -24,9 +24,46 @@ const MODELS = {
   pollinations: ['flux', 'zimage', 'klein', 'kontext', 'gptimage', 'gptimage-large', 'gpt-image-2', 'nova-canvas']
 };
 
-// Пресеты стилей (выпадающий список). Полный официальный список подставим позже — сейчас известные.
+// Пресеты стилей — полный каталог из styles.json прокси (149 шт).
 const STYLES = [
-  'y2k_cellphone', 'kodak_portra_400', 'photorealistic', 'cinematic', 'anime', 'soft_film', 'flash_photo'
+  'monet', 'manet', 'van_gogh', 'serov',
+  'rembrandt', 'repin', 'klimt', 'dark_fantasy',
+  'classic_fantasy', 'horror_illustration', 'art_nouveau', 'bilibin_v3',
+  'pin_up', 'cinematic_realism', 'cinematic_art', 'film_noir',
+  'sin_city', 'webcam_candid', 'oldschool_lowpoly', 'skyrim',
+  'baldurs_gate_3', 'stalker', 'minecraft', 'mmo_2000s',
+  'stardew_valley', 'genshin_impact', 'borderlands', 'point_and_click',
+  'adventure_time', 'star_vs_evil', 'rick_and_morty', 'steven_universe',
+  'winx_club', 'witch', 'bratz', 'tim_burton_2d',
+  'anime_still', 'visual_novel', 'fourth_wall', 'manhwa',
+  'chibi_manhwa', 'manga_bw', 'studio_ghibli', 'hokusai',
+  'japanese_watercolor', 'sketch', 'linocut', 'pop_art',
+  'soviet_mosaic', 'soviet_poster', 'spider_verse', 'arcane_v4',
+  'matt_rhodes_bioware', 'stop_motion_puppet', 'tim_burton_stopmotion', 'cyberpunk_2077_photo_mode',
+  'cyberpunk_2077_screenshot', 'fallout_4_photo_mode', 'fallout_4_screenshot', 'gta_san_andreas',
+  'vtmb_bloodlines', 'league_of_legends_splash', 'cinestill_800t', 'kodak_portra_400',
+  'fujifilm_pro_400h', 'fujifilm_velvia_50', 'lomography_cross_process', 'disposable_camera',
+  'caravaggio', 'semi_real_roulette', 'alex_ross', 'artgerm',
+  'charlie_bowater', 'cinematic_manhwa', 'guweiz', 'kyoto_animation',
+  'luminist_oil', 'makoto_shinkai', 'moebius', 'nan_goldin',
+  'peter_lindbergh', 'pre_raphaelite', 'retro_shoujo', 'ross_tran',
+  'ufotable', 'takehiko_inoue', 'vhs_camcorder', 'vofan',
+  'wlop', '80s_anime', 'yoshitaka_amano', 'annie_leibovitz',
+  'avatar_the_last_airbender', 'bjd_doll', 'bloodborne_elden_ring', 'karl_bryullov',
+  'cartoon_network', 'charcoal_portrait', 'clamp', 'cowboy_bebop',
+  'vampire_hunter_d', 'disney_renaissance', 'dry_pastel', 'gachiakuta',
+  'hand_painted_key_art', 'hellsing_ultimate', 'helmut_newton', 'hotline_miami',
+  'infinity_nikki', 'inio_asano', 'junji_ito', 'junji_ito_manga_page',
+  'kawaii', 'klaus', 'ilya_kuvshinov', 'malcolm_liepke',
+  'life_is_strange_like', 'mike_mignola', 'national_geographic', 'neon_comic',
+  'yuri_norshtein', 'overwatch', 'pascal_campion', 'persian_miniature',
+  'persona_5', 'persona_5_no_text', 'polaroid_sx_70', 'rococo',
+  'russian_collectible_book', 'russian_fairy_tale_book_illustration', 'andrei_rublev_russian_icon', 'john_singer_sargent',
+  'egon_schiele', 'scrapbook_punk_zine_photomontage', 'scrapbook_semireal', 'silent_hill_2',
+  'soft_oil_pastel', 'stained_glass_window', 'tarkovsky_kalatozov', 'trigger',
+  'kodak_tri_x_400_ilford_hp5', 'viktor_vasnetsov', 'vivian_maier', 'mikhail_vrubel',
+  'watercolor', 'wes_anderson', 'wolfwalkers', 'world_of_horror',
+  'y2k_cellphone'
 ];
 
 const DEFAULTS = {
