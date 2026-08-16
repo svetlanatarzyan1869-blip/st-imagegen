@@ -1,63 +1,67 @@
 /*
  * ImageGen (proxy) — расширение SillyTavern.
- * Порт логики Tavo-плагина: ловит маркер [IMG]eng|rus|chars[/IMG] в ответе бота,
- * дёргает прокси генерации (тот же, что у Tavo-версии), вставляет картинку в сообщение.
+ * Картинки по ходу ролёвки через прокси-генерацию (как в Tavo-версии).
  *
- * Прокси-контракт (GET): {baseUrl}?data=<DATA>&characters=<json>&prompt=<eng>&style=<style>&model=<model>&userId=<uid>
- *   -> 302 -> URL картинки (ImgBB). CORS *. При ошибке: SVG + заголовок X-ImageGen-Error (base64 {title,advice,retry})
- *   + в теле <!--IGLOG ... IGLOG--> серверный лог.
+ * Два режима:
+ *  - auto (по умолчанию, card-agnostic): бот пишет обычный ответ → расширение вырезает служебные
+ *    теги → шлёт прозу в промпт-райтер → генерит картинку → вставляет ИНЛАЙН в текст (markdown).
+ *    Карточку/пресет юзеру править НЕ нужно.
+ *  - marker: модель сама вставляет [IMG]eng|rus|Name;Name2[/IMG] — заменяется на инлайн-картинку.
  *
- * MVP: авто-картинка по маркеру + /imagegen для ручного теста + панель настроек + отчёт о последней ошибке.
- * НЕ в MVP: редакторы одежды/фона/причёски, промпт-райтер, мульти-реф лиц (итерации позже).
+ * Всё конфигурится в панели ST. DATA (зашифрованные ключи) — с сайта-конструктора.
  */
 
-const NAME = 'st-imagegen';
 const KEY = 'imagegen_proxy';
 
-const DEFAULTS = {
-  enabled: true,
-  baseUrl: 'https://linkapi-proxy-imgbb-key-cache.vercel.app/api/generate',
-  provider: 'link',
-  model: 'gemini-3.1-flash-image-preview',
-  style: 'y2k_cellphone',
-  userId: '',
-  data: '', // зашифрованный DATA-блок с сайта (шаг «зашифровать ключи»). Пусто = не сконфигурировано.
-  refs: [], // [{name, url}] — референсы персонажей (правятся в панели)
-  lastError: ''
-};
-
-// Прокси по провайдерам (baseUrl подставляется при смене провайдера).
 const BASE_URLS = {
   link: 'https://linkapi-proxy-imgbb-key-cache.vercel.app/api/generate',
   naistera: 'https://naistera.vercel.app/api/generate',
   pollinations: 'https://pollinations-tavo.vercel.app/api/generate'
 };
-
-// Списки моделей по провайдерам (для выпадашки). Совпадают с сайтом-конструктором.
 const MODELS = {
   link: ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview', 'gemini-3-pro-image', 'gemini-2.5-flash-image', 'pro/gemini-3.1-flash-image-preview', 'pro/gemini-3-pro-image-preview', 'pro/gemini-2.5-flash-image', 'gpt-image-2', 'gpt-image-2-c'],
   naistera: ['flux', 'flux-realism', 'flux-anime', 'flux-3d', 'sdxl', 'sd-3.5-large'],
   pollinations: ['flux', 'zimage', 'klein', 'kontext', 'gptimage', 'gptimage-large', 'gpt-image-2', 'nova-canvas']
 };
 
-function ctx() {
-  return (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
-}
+const DEFAULTS = {
+  enabled: true,
+  mode: 'auto',        // 'auto' | 'marker'
+  autoEvery: 1,        // auto: генерить каждый N-й ответ бота
+  baseUrl: BASE_URLS.link,
+  writerUrl: 'https://vision-proxy-tavo.vercel.app/api/promptwriter',
+  provider: 'link',
+  model: 'gemini-3.1-flash-image-preview',
+  style: 'y2k_cellphone',
+  userId: '',
+  data: '',            // зашифрованный DATA-блок с сайта (шаг «зашифровать ключи»)
+  refs: [],            // [{name, url}]
+  lastError: ''
+};
+
+function ctx() { return (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null; }
 function settings() {
   const c = ctx();
-  if (!c) return { ...DEFAULTS };
+  if (!c) return Object.assign({}, DEFAULTS);
   c.extensionSettings[KEY] = Object.assign({}, DEFAULTS, c.extensionSettings[KEY] || {});
   return c.extensionSettings[KEY];
 }
-function saveSettings() {
-  const c = ctx();
-  try { c.saveSettingsDebounced(); } catch (e) {}
-}
-function toast(msg, type) {
-  try { if (typeof toastr !== 'undefined') toastr[type || 'info'](msg, 'ImageGen'); } catch (e) {}
+function saveSettings() { const c = ctx(); try { c.saveSettingsDebounced(); } catch (e) {} }
+function toast(msg, type) { try { if (typeof toastr !== 'undefined') toastr[type || 'info'](msg, 'ImageGen'); } catch (e) {} }
+function norm(s) { return (s || '').trim().toLowerCase(); }
+function b64dJson(b64) { try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch (e) { try { return JSON.parse(atob(b64)); } catch (e2) { return null; } } }
+
+// ── чистка ответа до прозы (убираем <think>, [TAG]..[/TAG], <TAG>..</TAG>, одиночные [..] строки) ──
+function stripToProse(mes) {
+  let t = String(mes || '');
+  t = t.replace(/<think>[\s\S]*?<\/think>/gi, ' ');
+  t = t.replace(/\[([A-Za-z_]+)\][\s\S]*?\[\/\1\]/g, ' ');   // [HUD]..[/HUD], [IM]..[/IM], [CONSEQUENCE].., [CHAOS]..
+  t = t.replace(/<([A-Za-z_]+)>[\s\S]*?<\/\1>/g, ' ');       // <DYNAMICS>..</DYNAMICS>
+  t = t.replace(/^\s*\[[^\]\n]*\]\s*$/gm, ' ');              // одиночные [X: ...] строки
+  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-// ── маркер ──
+// ── маркер [IMG]eng|rus|chars[/IMG] ──
 function parseMarker(text) {
   if (!text) return null;
   const m = text.match(/\[IMG\]([\s\S]*?)\[\/IMG\]/);
@@ -79,34 +83,34 @@ function parseMarker(text) {
   return { full: m[0], eng, rus, chars };
 }
 
-function norm(s) { return (s || '').trim().toLowerCase(); }
-
-// Модель в маркере пишет ИМЕНА; ссылки подставляем из рефов панели (если в маркере нет своей).
+// имена из панели рефов, встречающиеся в тексте → [{name,url}]
+function charsFromText(text) {
+  const refs = settings().refs || [];
+  const low = String(text || '').toLowerCase();
+  const out = [];
+  refs.forEach(function (r) { if (r.name && low.indexOf(norm(r.name)) >= 0) out.push({ name: r.name, url: r.url }); });
+  return out;
+}
+// маркер пишет имена — ссылки берём из рефов панели
 function resolveChars(chars) {
   const refs = settings().refs || [];
   return (chars || []).map(function (c) {
     if (c.url) return c;
-    const found = refs.find(function (r) { return norm(r.name) === norm(c.name); });
-    return found ? { name: c.name, url: found.url } : c;
+    const f = refs.find(function (r) { return norm(r.name) === norm(c.name); });
+    return f ? { name: c.name, url: f.url } : c;
   });
 }
 
 function buildUrl(eng, chars) {
   const s = settings();
-  let url = s.baseUrl
+  return s.baseUrl
     + '?data=' + encodeURIComponent(s.data)
     + '&characters=' + encodeURIComponent(JSON.stringify(chars || []))
     + '&prompt=' + encodeURIComponent(eng)
     + '&style=' + encodeURIComponent(s.style)
     + '&model=' + encodeURIComponent(s.model)
-    + '&userId=' + encodeURIComponent(s.userId);
-  return url + '&_r=' + Date.now();
-}
-
-function b64dJson(b64) {
-  try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch (e) {
-    try { return JSON.parse(atob(b64)); } catch (e2) { return null; }
-  }
+    + '&userId=' + encodeURIComponent(s.userId)
+    + '&_r=' + Date.now();
 }
 
 function saveErrReport(kind, r, bodyText, info, exc, url) {
@@ -114,9 +118,7 @@ function saveErrReport(kind, r, bodyText, info, exc, url) {
   const L = [];
   L.push('=== ImageGen (ST) error report ===');
   L.push('time: ' + new Date().toISOString());
-  L.push('provider: ' + s.provider);
-  L.push('model: ' + s.model);
-  L.push('style: ' + s.style);
+  L.push('mode: ' + s.mode + ' | provider: ' + s.provider + ' | model: ' + s.model + ' | style: ' + s.style);
   L.push('userId: ' + s.userId);
   L.push('');
   L.push('--- error ---');
@@ -136,149 +138,175 @@ function saveErrReport(kind, r, bodyText, info, exc, url) {
   try { $('#imagegen_lasterror').val(s.lastError); } catch (e) {}
 }
 
-// ── генерация + вставка ──
-async function generateFor(eng, chars, url) {
-  // url необязателен (для ручного теста передаём готовый)
-  const u = url || buildUrl(eng, chars);
+// ── генерация (возвращает URL картинки) ──
+async function generateFor(eng, chars) {
+  const u = buildUrl(eng, chars);
   console.log('[ImageGen] GET', u);
   let r;
-  try {
-    r = await fetch(u);
-  } catch (e) {
-    // В браузере частая причина: CORS при следовании 302 на хост картинки (i.ibb.co).
-    // Генерация при этом обычно УСПЕШНА — отдаём URL прокси, <img> сам пройдёт редирект.
-    console.warn('[ImageGen] fetch threw (вероятно CORS на редиректе) → отдаю URL прокси напрямую:', e && e.message);
-    return u;
+  try { r = await fetch(u); }
+  catch (e) {
+    console.warn('[ImageGen] fetch threw (вероятно CORS на 302→ibb) → отдаю URL прокси:', e && e.message);
+    return u; // <img> сам пройдёт редирект
   }
   const errHdr = r.headers.get('X-ImageGen-Error');
   if (errHdr) {
     const info = b64dJson(errHdr) || {};
     let body = ''; try { body = await r.text(); } catch (e) {}
     saveErrReport('provider_error', r, body, info, null, u);
-    throw new Error(info.title || 'Ошибка генерации');
+    throw new Error(info.title || 'ошибка генерации');
   }
   if (!r.ok) {
     let body = ''; try { body = await r.text(); } catch (e) {}
     saveErrReport('http_' + r.status, r, body, null, null, u);
-    throw new Error('Запрос не удался (HTTP ' + r.status + ')');
+    throw new Error('HTTP ' + r.status);
   }
-  console.log('[ImageGen] resolved image URL:', r.url);
-  return r.url || u; // после 302 = финальный URL картинки (ImgBB); если пусто — URL прокси
+  console.log('[ImageGen] image URL:', r.url);
+  return r.url || u;
 }
 
-function attachImage(mesId, imageUrl, title) {
-  const c = ctx(); if (!c) return;
-  const message = c.chat[mesId];
-  if (!message) { console.warn('[ImageGen] нет сообщения с id', mesId); return; }
-  if (!message.extra || typeof message.extra !== 'object') message.extra = {};
-
-  // Актуальный ST: картинки живут в массиве extra.media (extra.image устарел → варнинг).
-  const media = { url: imageUrl, title: title || message.mes || '', type: 'image', generation_type: 6 };
-  if (!Array.isArray(message.extra.media)) message.extra.media = [];
-  if (!message.extra.media.length && !message.extra.media_display) message.extra.media_display = 'gallery';
-  message.extra.media.push(media);
-  message.extra.media_index = message.extra.media.length - 1;
-  message.extra.inline_image = true;
-
-  const el = $('#chat').find('.mes[mesid="' + mesId + '"]');
-  console.log('[ImageGen] attach → mesId', mesId, '| el:', el.length, '| media items:', message.extra.media.length, '| url:', imageUrl);
+// ── промпт-райтер (проза → английский промпт сцены) ──
+async function callWriter(prose) {
+  const s = settings();
+  let r;
   try {
-    if (typeof c.appendMediaToMessage === 'function') { c.appendMediaToMessage(message, el); console.log('[ImageGen] appendMediaToMessage вызван'); }
-    else console.warn('[ImageGen] appendMediaToMessage отсутствует в getContext()');
-  } catch (e) { console.error('[ImageGen] appendMediaToMessage error:', e); }
+    r = await fetch(s.writerUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: s.data, scene: String(prose).slice(0, 4000), style: s.style })
+    });
+  } catch (e) { saveErrReport('writer_fetch_threw', null, '', null, e, s.writerUrl); throw new Error('промпт-райтер недоступен (CORS?)'); }
+  if (!r.ok) { let b = ''; try { b = await r.text(); } catch (e) {} saveErrReport('writer_http_' + r.status, r, b, null, null, s.writerUrl); throw new Error('промпт-райтер HTTP ' + r.status); }
+  let txt = ''; try { txt = await r.text(); } catch (e) {}
+  txt = (txt || '').trim();
+  if (txt.charAt(0) === '{') { try { const j = JSON.parse(txt); txt = j.prompt || j.result || j.text || ''; } catch (e) {} }
+  return txt.trim();
+}
+
+// ── вставка markdown-картинки ИНЛАЙН в текст сообщения ──
+function mdImage(url, caption) {
+  return '![' + String(caption || '').replace(/[\[\]]/g, '') + '](' + url + ')';
+}
+function insertInline(mesId, message, mdOrReplaceFull, url, caption, replaceFull) {
+  const c = ctx();
+  const img = mdImage(url, caption);
+  let mes = String(message.mes || '');
+  if (replaceFull) {
+    mes = mes.replace(replaceFull, img); // marker-режим: заменяем маркер
+  } else {
+    // auto: вставить после первого прозаического абзаца
+    const blocks = mes.split(/\n\s*\n/);
+    let idx = -1;
+    for (let i = 0; i < blocks.length; i++) { const b = blocks[i].trim(); if (b && !/^[\[<]/.test(b)) { idx = i; break; } }
+    if (idx < 0) idx = blocks.length - 1;
+    blocks.splice(idx + 1, 0, img);
+    mes = blocks.join('\n\n');
+  }
+  message.mes = mes;
+  try { c.updateMessageBlock(mesId, message); console.log('[ImageGen] картинка вставлена инлайн, mesId', mesId); }
+  catch (e) { console.error('[ImageGen] updateMessageBlock:', e); }
   try { c.saveChat(); } catch (e) {}
 }
 
-// Создать ОТДЕЛЬНОЕ сообщение с картинкой (для /imagegen — не цепляемся к чужим кастомным карточкам).
+// ── создать отдельное сообщение с картинкой (для /imagegen) ──
 function addImageMessage(imageUrl, title) {
   const c = ctx(); if (!c) return;
   const msg = {
-    name: 'ImageGen',
-    is_user: false,
-    is_system: false,
+    name: 'ImageGen', is_user: false, is_system: false,
     send_date: (typeof c.getMessageTimeStamp === 'function' ? c.getMessageTimeStamp() : new Date().toLocaleString()),
-    mes: title || '',
-    extra: {
-      media: [{ url: imageUrl, title: title || '', type: 'image', generation_type: 6 }],
-      media_index: 0,
-      media_display: 'gallery',
-      inline_image: true
-    }
+    mes: mdImage(imageUrl, title),
+    extra: {}
   };
   c.chat.push(msg);
-  console.log('[ImageGen] новое сообщение с картинкой, id', c.chat.length - 1, '| url:', imageUrl);
   try { c.addOneMessage(c.chat[c.chat.length - 1]); } catch (e) { console.error('[ImageGen] addOneMessage:', e); }
   try { c.saveChat(); } catch (e) {}
 }
 
+// ── обработка ответа бота ──
+const processed = new Set();
+let autoCounter = 0;
 async function handleMessage(mesId) {
   const s = settings();
   if (!s.enabled) return;
   const c = ctx(); if (!c) return;
   const message = c.chat[mesId];
   if (!message || message.is_user || message.is_system) return;
-  if (message.extra && message.extra.image) return; // уже есть картинка
-  const parsed = parseMarker(message.mes || '');
-  if (!parsed) return;
-  if (!s.data) { toast('ImageGen: не задан DATA (настройки расширения)', 'warning'); return; }
+  const key = mesId + ':' + (message.swipe_id != null ? message.swipe_id : 0);
+  if (processed.has(key)) return;
 
-  // убрать маркер из видимого текста (оставить русскую подпись курсивом)
-  try {
-    message.mes = (message.mes || '').replace(parsed.full, parsed.rus ? ('*' + parsed.rus + '*') : '').trim();
-    if (typeof c.updateMessageBlock === 'function') c.updateMessageBlock(mesId, message);
-  } catch (e) { /* если нет updateMessageBlock — маркер спрячет companion-регекс, см. README */ }
-
-  try {
-    toast('Генерирую картинку…');
-    const imgUrl = await generateFor(parsed.eng, resolveChars(parsed.chars));
-    attachImage(mesId, imgUrl, parsed.rus || parsed.eng);
-  } catch (e) {
-    toast('Ошибка: ' + (e && e.message ? e.message : e) + ' — см. отчёт в настройках', 'error');
+  if (s.mode === 'marker') {
+    const parsed = parseMarker(message.mes || '');
+    if (!parsed) return;
+    if (!s.data) { toast('не задан DATA (настройки расширения)', 'warning'); return; }
+    processed.add(key);
+    try {
+      toast('Генерирую картинку…');
+      const url = await generateFor(parsed.eng, resolveChars(parsed.chars));
+      insertInline(mesId, message, null, url, parsed.rus, parsed.full);
+    } catch (e) { toast('Ошибка: ' + (e.message || e) + ' — см. отчёт', 'error'); }
+    return;
   }
+
+  // auto
+  autoCounter++;
+  if (s.autoEvery > 1 && (autoCounter % s.autoEvery !== 0)) return;
+  if (!s.data) { toast('не задан DATA (настройки расширения)', 'warning'); return; }
+  const prose = stripToProse(message.mes || '');
+  if (prose.length < 30) return;
+  processed.add(key);
+  try {
+    toast('Рисую сцену…');
+    const eng = await callWriter(prose);
+    if (!eng) throw new Error('пустой промпт от райтера');
+    const chars = charsFromText(prose);
+    const url = await generateFor(eng, chars);
+    insertInline(mesId, message, null, url, '', null);
+  } catch (e) { toast('Ошибка: ' + (e.message || e) + ' — см. отчёт', 'error'); }
 }
 
-// ── UI настроек ──
+// ── UI ──
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-
 function populateModels() {
   const s = settings();
   const list = MODELS[s.provider] || MODELS.link;
-  const sel = $('#imagegen_model');
-  sel.empty();
+  const sel = $('#imagegen_model'); sel.empty();
   list.forEach(function (m) { sel.append('<option value="' + esc(m) + '">' + esc(m) + '</option>'); });
   if (list.indexOf(s.model) < 0) { s.model = list[0]; saveSettings(); }
   sel.val(s.model);
 }
-
 function renderRefs() {
   const s = settings();
-  const box = $('#imagegen_refs');
-  box.empty();
+  const box = $('#imagegen_refs'); box.empty();
   (s.refs || []).forEach(function (r, i) {
-    const row = $('<div class="imagegen-ref-row" style="display:flex;gap:4px;margin-bottom:4px;align-items:center;"></div>');
+    const row = $('<div style="display:flex;gap:4px;margin-bottom:4px;align-items:center;"></div>');
     const nm = $('<input class="text_pole" type="text" placeholder="имя" style="flex:0 0 30%;">').val(r.name);
     const url = $('<input class="text_pole" type="text" placeholder="ссылка на фото (i.ibb.co/...)" style="flex:1;">').val(r.url);
     const del = $('<div class="menu_button" title="удалить" style="flex:0 0 auto;">✕</div>');
     nm.on('input', function () { settings().refs[i].name = $(this).val(); saveSettings(); });
     url.on('input', function () { settings().refs[i].url = $(this).val(); saveSettings(); });
     del.on('click', function () { settings().refs.splice(i, 1); saveSettings(); renderRefs(); });
-    row.append(nm).append(url).append(del);
-    box.append(row);
+    row.append(nm).append(url).append(del); box.append(row);
   });
-  if (!(s.refs || []).length) box.append('<div class="imagegen-hint" style="opacity:.6;font-size:.9em;">Пока нет персонажей. Добавь имя + ссылку на фото.</div>');
+  if (!(s.refs || []).length) box.append('<div style="opacity:.6;font-size:.9em;">Пока нет персонажей. Добавь имя + ссылку на фото.</div>');
 }
-
 function injectSettingsUI() {
   const s = settings();
   const html = `
   <div class="imagegen-settings">
     <div class="inline-drawer">
-      <div class="inline-drawer-toggle inline-drawer-header">
-        <b>ImageGen (proxy)</b>
-        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-      </div>
+      <div class="inline-drawer-toggle inline-drawer-header"><b>ImageGen (proxy)</b>
+        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
       <div class="inline-drawer-content">
         <label class="checkbox_label"><input id="imagegen_enabled" type="checkbox"> Включено</label>
+        <label>Режим</label>
+        <select id="imagegen_mode" class="text_pole">
+          <option value="auto">Авто (картинка из ответа бота — карточку не трогать)</option>
+          <option value="marker">Маркер [IMG] (модель сама вставляет)</option>
+        </select>
+        <label>Как часто в авто-режиме</label>
+        <select id="imagegen_every" class="text_pole">
+          <option value="1">каждый ответ</option>
+          <option value="2">каждый 2-й</option>
+          <option value="3">каждый 3-й</option>
+        </select>
         <label>Провайдер</label>
         <select id="imagegen_provider" class="text_pole">
           <option value="link">link (LinkAPI)</option>
@@ -291,15 +319,17 @@ function injectSettingsUI() {
         <input id="imagegen_style" class="text_pole" type="text">
         <label>userId (для кэша)</label>
         <input id="imagegen_userid" class="text_pole" type="text">
-        <label>DATA (зашифрованные ключи — шаг «зашифровать» на сайте)</label>
+        <label>DATA (зашифрованные ключи — кнопка «📋 DATA» на сайте)</label>
         <textarea id="imagegen_data" class="text_pole" rows="2" placeholder="IV==:ENC..."></textarea>
         <hr>
-        <label><b>Персонажи (рефы)</b> — модель пишет имена, ссылки подставятся сами</label>
+        <label><b>Персонажи (рефы)</b> — их имена в тексте → подставится фото</label>
         <div id="imagegen_refs"></div>
         <div class="menu_button" id="imagegen_addref" style="margin-top:4px;">+ добавить персонажа</div>
         <hr>
         <label>Прокси (baseUrl)</label>
         <input id="imagegen_baseurl" class="text_pole" type="text">
+        <label>Промпт-райтер (URL)</label>
+        <input id="imagegen_writerurl" class="text_pole" type="text">
         <hr>
         <label>Отчёт о последней ошибке</label>
         <textarea id="imagegen_lasterror" class="text_pole" rows="6" readonly></textarea>
@@ -310,17 +340,15 @@ function injectSettingsUI() {
   $('#extensions_settings2').append(html);
 
   $('#imagegen_enabled').prop('checked', s.enabled).on('input', function () { settings().enabled = $(this).prop('checked'); saveSettings(); });
-  $('#imagegen_baseurl').val(s.baseUrl).on('input', function () { settings().baseUrl = $(this).val(); saveSettings(); });
-  $('#imagegen_provider').val(s.provider).on('change', function () {
-    const p = $(this).val();
-    settings().provider = p;
-    if (BASE_URLS[p]) { settings().baseUrl = BASE_URLS[p]; $('#imagegen_baseurl').val(BASE_URLS[p]); }
-    saveSettings(); populateModels();
-  });
+  $('#imagegen_mode').val(s.mode).on('change', function () { settings().mode = $(this).val(); saveSettings(); });
+  $('#imagegen_every').val(String(s.autoEvery)).on('change', function () { settings().autoEvery = parseInt($(this).val(), 10) || 1; saveSettings(); });
+  $('#imagegen_provider').val(s.provider).on('change', function () { const p = $(this).val(); settings().provider = p; if (BASE_URLS[p]) { settings().baseUrl = BASE_URLS[p]; $('#imagegen_baseurl').val(BASE_URLS[p]); } saveSettings(); populateModels(); });
   $('#imagegen_model').on('change', function () { settings().model = $(this).val(); saveSettings(); });
   $('#imagegen_style').val(s.style).on('input', function () { settings().style = $(this).val(); saveSettings(); });
   $('#imagegen_userid').val(s.userId).on('input', function () { settings().userId = $(this).val(); saveSettings(); });
   $('#imagegen_data').val(s.data).on('input', function () { settings().data = $(this).val(); saveSettings(); });
+  $('#imagegen_baseurl').val(s.baseUrl).on('input', function () { settings().baseUrl = $(this).val(); saveSettings(); });
+  $('#imagegen_writerurl').val(s.writerUrl).on('input', function () { settings().writerUrl = $(this).val(); saveSettings(); });
   $('#imagegen_addref').on('click', function () { settings().refs.push({ name: '', url: '' }); saveSettings(); renderRefs(); });
   $('#imagegen_lasterror').val(s.lastError);
   $('#imagegen_copyerr').on('click', function () {
@@ -329,49 +357,44 @@ function injectSettingsUI() {
     try { navigator.clipboard.writeText(t).then(function () { toast('Скопировано'); }, function () { $('#imagegen_lasterror').focus().select(); }); }
     catch (e) { $('#imagegen_lasterror').focus().select(); }
   });
-  populateModels();
-  renderRefs();
+  populateModels(); renderRefs();
 }
 
-// ── slash-команда для ручного теста ──
+// ── slash-команды ──
 function registerCommands() {
   const c = ctx(); if (!c) return;
-  const fn = async (args, value) => {
+  const genManual = async (args, value) => {
     const eng = (value || '').trim();
     if (!eng) { toast('Использование: /imagegen <english prompt>', 'warning'); return ''; }
-    try {
-      toast('Генерирую…');
-      const imgUrl = await generateFor(eng, []);
-      addImageMessage(imgUrl, eng);
-      return imgUrl;
-    } catch (e) { toast('Ошибка: ' + (e && e.message ? e.message : e), 'error'); return ''; }
+    try { toast('Генерирую…'); const url = await generateFor(eng, []); addImageMessage(url, eng); return url; }
+    catch (e) { toast('Ошибка: ' + (e.message || e), 'error'); return ''; }
+  };
+  const genFromLast = async () => {
+    const chat = c.chat;
+    for (let i = chat.length - 1; i >= 0; i--) {
+      if (!chat[i].is_user && !chat[i].is_system) { processed.delete(i + ':' + (chat[i].swipe_id || 0)); await handleMessage(i); return ''; }
+    }
+    toast('Нет ответа бота для картинки', 'warning'); return '';
   };
   try {
-    // современный API
     const P = c.SlashCommandParser;
     if (P && P.addCommandObject && c.SlashCommand) {
-      P.addCommandObject(c.SlashCommand.fromProps({
-        name: 'imagegen',
-        callback: fn,
-        helpString: 'Сгенерировать картинку по английскому промпту через ImageGen-прокси',
-        returns: 'url картинки'
-      }));
+      P.addCommandObject(c.SlashCommand.fromProps({ name: 'imagegen', callback: genManual, helpString: 'Картинка по английскому промпту (своё сообщение)' }));
+      P.addCommandObject(c.SlashCommand.fromProps({ name: 'imgnow', callback: genFromLast, helpString: 'Картинка по последнему ответу бота (инлайн)' }));
       return;
     }
   } catch (e) {}
-  try { c.registerSlashCommand('imagegen', fn, [], 'Сгенерировать картинку через ImageGen-прокси', true, true); } catch (e) {}
+  try { c.registerSlashCommand('imagegen', genManual, [], 'Картинка по промпту', true, true); } catch (e) {}
+  try { c.registerSlashCommand('imgnow', genFromLast, [], 'Картинка по последнему ответу', true, true); } catch (e) {}
 }
 
-// ── init ──
 jQuery(async function () {
   const c = ctx();
   if (!c) { console.error('[ImageGen] SillyTavern.getContext недоступен'); return; }
-  settings(); // init defaults
+  settings();
   try { injectSettingsUI(); } catch (e) { console.error('[ImageGen] settings UI:', e); }
   try { registerCommands(); } catch (e) { console.error('[ImageGen] commands:', e); }
-  try {
-    // CHARACTER_MESSAGE_RENDERED — текст финализирован и DOM-элемент существует (нужен для appendMediaToMessage).
-    c.eventSource.on(c.eventTypes.CHARACTER_MESSAGE_RENDERED, handleMessage);
-  } catch (e) { console.error('[ImageGen] event subscribe:', e); }
-  console.log('[ImageGen] loaded');
+  try { c.eventSource.on(c.eventTypes.CHARACTER_MESSAGE_RENDERED, handleMessage); }
+  catch (e) { console.error('[ImageGen] event subscribe:', e); }
+  console.log('[ImageGen] loaded (mode:', settings().mode, ')');
 });
