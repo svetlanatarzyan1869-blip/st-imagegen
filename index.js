@@ -191,8 +191,42 @@ function saveErrReport(kind, r, bodyText, info, exc, url) {
   try { $('#imagegen_lasterror').val(s.lastError); } catch (e) {}
 }
 
+// ── Гардероб (SillyWardrobe): активный аутфит → залить на imgbb → реф ──
+const outfitCache = {}; // outfitId -> url
+async function uploadImage(base64) {
+  const s = settings();
+  const r = await fetch(s.baseUrl, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: s.data, image: base64 })
+  });
+  const j = await r.json().catch(function () { return {}; });
+  if (!r.ok || !j.url) throw new Error(j.error || ('upload HTTP ' + r.status));
+  return j.url;
+}
+async function outfitRefs() {
+  const w = (typeof window !== 'undefined') ? window.sillyWardrobe : null;
+  if (!w || (w.isReady && !w.isReady())) return [];
+  const out = [];
+  for (const side of ['bot', 'user']) {
+    let data = null;
+    try { data = w.getActiveOutfitData ? w.getActiveOutfitData(side) : null; } catch (e) {}
+    let b64 = data && data.base64;
+    if (!b64) { try { b64 = w.getActiveOutfitBase64Async ? await w.getActiveOutfitBase64Async(side) : (w.getActiveOutfitBase64 ? w.getActiveOutfitBase64(side) : null); } catch (e) {} }
+    if (!b64) continue;
+    const id = (data && data.id) || (side + '_' + b64.length);
+    if (!outfitCache[id]) {
+      try { outfitCache[id] = await uploadImage(b64); console.log('[ImageGen] аутфit', side, 'залит:', outfitCache[id]); }
+      catch (e) { console.warn('[ImageGen] аутфит upload fail:', e && e.message); continue; }
+    }
+    out.push({ name: (data && data.name) || (side + ' outfit'), url: outfitCache[id] });
+  }
+  return out;
+}
+
 // ── генерация (возвращает URL картинки) ──
 async function generateFor(eng, chars) {
+  chars = (chars || []).slice();
+  try { const orefs = await outfitRefs(); if (orefs.length) chars = chars.concat(orefs); } catch (e) {}
   const u = buildUrl(eng, chars);
   console.log('[ImageGen] GET', u);
   let r;
