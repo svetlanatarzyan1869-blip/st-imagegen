@@ -66,6 +66,7 @@ function stripToProse(mes) {
   t = t.replace(/\[([A-Za-z_]+)\][\s\S]*?\[\/\1\]/g, ' ');   // [HUD]..[/HUD], [IM]..[/IM], [CONSEQUENCE].., [CHAOS]..
   t = t.replace(/<([A-Za-z_]+)>[\s\S]*?<\/\1>/g, ' ');       // <DYNAMICS>..</DYNAMICS>
   t = t.replace(/^\s*\[[^\]\n]*\]\s*$/gm, ' ');              // одиночные [X: ...] строки
+  t = t.replace(/^\s*[A-ZА-Я][A-ZА-Я0-9 _\-]{1,30}:.*$/gm, ' '); // утёкшие ярлыки ризонинга (WHO:, WORLD:, COLD READ:...)
   return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -211,32 +212,32 @@ function firstSentence(text) {
   const m = t.match(/^.{5,120}?[.!?…]/);
   return (m ? m[0] : t.slice(0, 110)).trim();
 }
-function insertInline(mesId, message, mdOrReplaceFull, url, caption, replaceFull) {
-  const c = ctx();
-  const img = mdImage(url, caption);
-  let mes = String(message.mes || '');
-  if (replaceFull) {
-    mes = mes.replace(replaceFull, img); // marker-режим: заменяем маркер
-  } else {
-    // auto: вставить после первого прозаического абзаца — ПОСЛЕ </think> и мимо тегов/ярлыков ризонинга
-    const hasThink = /<think>/i.test(mes);
-    const blocks = mes.split(/\n\s*\n/);
-    let passedThink = !hasThink;
-    const isProse = function (b) { return b && !/^[\[<]/.test(b) && !/^[A-ZА-Я][A-ZА-Я _\-]{1,20}:/.test(b); };
-    let idx = -1;
-    for (let i = 0; i < blocks.length; i++) {
-      const b = blocks[i].trim();
-      if (!passedThink) { if (/<\/think>/i.test(b)) passedThink = true; continue; }
-      if (isProse(b)) { idx = i; break; }
-    }
-    if (idx < 0) { for (let i = 0; i < blocks.length; i++) { if (isProse(blocks[i].trim())) { idx = i; break; } } }
-    if (idx < 0) idx = blocks.length - 1;
-    blocks.splice(idx + 1, 0, img);
-    mes = blocks.join('\n\n');
+// Лоадер-плейсхолдер (крутится + текст). Спиннер через класс (keyframes в <head>).
+function loadingBlock(token) {
+  return '<div data-ig="' + token + '" style="max-width:340px;margin:12px auto;padding:22px 12px;text-align:center;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.2);border-radius:12px;">'
+    + '<span class="imagegen-spin"></span>'
+    + '<div style="margin-top:10px;font-size:.85em;opacity:.8;">Генерирую картинку…</div></div>';
+}
+// Позиция вставки: СЕРЕДИНА прозы, после </think>, мимо тегов и ярлыков ризонинга.
+function placeInProse(mes, html) {
+  const hasThink = /<think>/i.test(mes);
+  const blocks = String(mes || '').split(/\n\s*\n/);
+  let passedThink = !hasThink;
+  const isProse = function (b) { return b && !/^[\[<]/.test(b) && !/^[A-ZА-Я][A-ZА-Я0-9 _\-]{1,30}:/.test(b); };
+  const proseIdx = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i].trim();
+    if (!passedThink) { if (/<\/think>/i.test(b)) passedThink = true; continue; }
+    if (isProse(b)) proseIdx.push(i);
   }
-  message.mes = mes;
-  try { c.updateMessageBlock(mesId, message); console.log('[ImageGen] картинка вставлена инлайн, mesId', mesId); }
-  catch (e) { console.error('[ImageGen] updateMessageBlock:', e); }
+  if (!proseIdx.length) for (let i = 0; i < blocks.length; i++) { if (isProse(blocks[i].trim())) proseIdx.push(i); }
+  const target = proseIdx.length ? proseIdx[Math.floor((proseIdx.length - 1) / 2)] : blocks.length - 1;
+  blocks.splice(target + 1, 0, html);
+  return blocks.join('\n\n');
+}
+function rerender(mesId, message) {
+  const c = ctx();
+  try { c.updateMessageBlock(mesId, message); } catch (e) { console.error('[ImageGen] updateMessageBlock:', e); }
   try { c.saveChat(); } catch (e) {}
 }
 
@@ -266,36 +267,51 @@ async function handleMessage(mesId) {
   const key = mesId + ':' + (message.swipe_id != null ? message.swipe_id : 0);
   if (processed.has(key)) return;
 
+  if (!s.data) { toast('не задан DATA (настройки расширения)', 'warning'); return; }
+  const token = 'ig' + Date.now();
+  const ph = loadingBlock(token);
+
   if (s.mode === 'marker') {
     const parsed = parseMarker(message.mes || '');
     if (!parsed) return;
-    if (!s.data) { toast('не задан DATA (настройки расширения)', 'warning'); return; }
     processed.add(key);
+    message.mes = String(message.mes || '').replace(parsed.full, ph); // маркер → лоадер
+    rerender(mesId, message);
     try {
-      toast('Генерирую картинку…');
       const url = await generateFor(parsed.eng, resolveChars(parsed.chars));
-      insertInline(mesId, message, null, url, parsed.rus, parsed.full);
-    } catch (e) { toast('Ошибка: ' + (e.message || e) + ' — см. отчёт', 'error'); }
+      message.mes = String(message.mes || '').replace(ph, mdImage(url, parsed.rus));
+      rerender(mesId, message);
+    } catch (e) {
+      message.mes = String(message.mes || '').replace(ph, parsed.full); // вернуть маркер
+      rerender(mesId, message);
+      toast('Ошибка: ' + (e.message || e) + ' — см. отчёт', 'error');
+    }
     return;
   }
 
   // auto
   autoCounter++;
   if (s.autoEvery > 1 && (autoCounter % s.autoEvery !== 0)) return;
-  if (!s.data) { toast('не задан DATA (настройки расширения)', 'warning'); return; }
   const prose = stripToProse(message.mes || '');
   if (prose.length < 30) return;
   processed.add(key);
+  message.mes = placeInProse(String(message.mes || ''), ph); // лоадер в середину прозы
+  rerender(mesId, message);
   try {
-    toast('Рисую сцену…');
     const eng = await callWriter(prose);
     if (!eng) throw new Error('пустой промпт от райтера');
     const chars = charsFromText(prose);
     const url = await generateFor(eng, chars);
-    // убрать оставшийся маркер [IMG]…[/IMG] из текста (если модель его выдала из старой инструкции)
-    message.mes = String(message.mes || '').replace(/\[IMG\][\s\S]*?\[\/IMG\]/g, '').replace(/\n{3,}/g, '\n\n').trim();
-    insertInline(mesId, message, null, url, firstSentence(prose), null);
-  } catch (e) { toast('Ошибка: ' + (e.message || e) + ' — см. отчёт', 'error'); }
+    message.mes = String(message.mes || '')
+      .replace(/\[IMG\][\s\S]*?\[\/IMG\]/g, '')       // остаточный маркер
+      .replace(ph, mdImage(url, firstSentence(prose))) // лоадер → картинка
+      .replace(/\n{3,}/g, '\n\n').trim();
+    rerender(mesId, message);
+  } catch (e) {
+    message.mes = String(message.mes || '').replace(ph, '').replace(/\n{3,}/g, '\n\n').trim();
+    rerender(mesId, message);
+    toast('Ошибка: ' + (e.message || e) + ' — см. отчёт', 'error');
+  }
 }
 
 // ── UI ──
@@ -447,7 +463,12 @@ jQuery(async function () {
   const c = ctx();
   if (!c) { console.error('[ImageGen] SillyTavern.getContext недоступен'); return; }
   settings();
-  // Размер задаётся width-атрибутом на <img> (санитайзер ST режет class/style). Отдельный CSS не нужен.
+  try {
+    $('head').append('<style>'
+      + '.imagegen-spin{display:inline-block;width:30px;height:30px;border:3px solid rgba(255,255,255,.25);border-top-color:var(--SmartThemeQuoteColor,#fff);border-radius:50%;animation:imagegen-rot .9s linear infinite;vertical-align:middle;}'
+      + '@keyframes imagegen-rot{to{transform:rotate(360deg);}}'
+      + '</style>');
+  } catch (e) {}
   try { injectSettingsUI(); } catch (e) { console.error('[ImageGen] settings UI:', e); }
   try { registerCommands(); } catch (e) { console.error('[ImageGen] commands:', e); }
   try { c.eventSource.on(c.eventTypes.CHARACTER_MESSAGE_RENDERED, handleMessage); }
