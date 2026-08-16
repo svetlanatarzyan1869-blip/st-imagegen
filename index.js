@@ -38,6 +38,9 @@ const DEFAULTS = {
   provider: 'link',
   model: 'gemini-3.1-flash-image-preview',
   style: 'y2k_cellphone',
+  edBg: '',    // редактор: фон/локация (english)
+  edPose: '',  // редактор: поза/ракурс
+  edHair: '',  // редактор: причёска/эмоция
   userId: '',
   data: '',            // зашифрованный DATA-блок с сайта (шаг «зашифровать ключи»)
   refs: [],            // [{name, url}]
@@ -106,12 +109,19 @@ function resolveChars(chars) {
   });
 }
 
+// Дописать редакторы сцены (фон/поза/причёска) к промпту.
+function applyEditors(eng) {
+  const s = settings();
+  const extra = [s.edBg, s.edPose, s.edHair].map(function (x) { return String(x || '').trim(); }).filter(Boolean);
+  return extra.length ? (String(eng || '').trim() + ', ' + extra.join(', ')) : eng;
+}
+
 function buildUrl(eng, chars) {
   const s = settings();
   return s.baseUrl
     + '?data=' + encodeURIComponent(s.data)
     + '&characters=' + encodeURIComponent(JSON.stringify(chars || []))
-    + '&prompt=' + encodeURIComponent(eng)
+    + '&prompt=' + encodeURIComponent(applyEditors(eng))
     + '&style=' + encodeURIComponent(s.style)
     + '&model=' + encodeURIComponent(s.model)
     + '&userId=' + encodeURIComponent(s.userId)
@@ -346,6 +356,14 @@ function injectSettingsUI() {
         <label>DATA (зашифрованные ключи — кнопка «📋 DATA» на сайте)</label>
         <textarea id="imagegen_data" class="text_pole" rows="2" placeholder="IV==:ENC..."></textarea>
         <hr>
+        <label><b>Редакторы сцены</b> (по-английски, применяются ко всем картинкам; пусто = не применять)</label>
+        <label>Фон / локация</label>
+        <input id="imagegen_ed_bg" class="text_pole" type="text" placeholder="напр. dim dorm room, rainy courtyard">
+        <label>Поза / ракурс</label>
+        <input id="imagegen_ed_pose" class="text_pole" type="text" placeholder="напр. full body shot, close-up, from behind">
+        <label>Причёска / эмоция</label>
+        <input id="imagegen_ed_hair" class="text_pole" type="text" placeholder="напр. wet hair, tired look">
+        <hr>
         <label><b>Персонажи (рефы)</b> — их имена в тексте → подставится фото</label>
         <div id="imagegen_refs"></div>
         <div class="menu_button" id="imagegen_addref" style="margin-top:4px;">+ добавить персонажа</div>
@@ -370,6 +388,9 @@ function injectSettingsUI() {
     saveSettings();
   });
   $('#imagegen_style_custom').on('input', function () { settings().style = $(this).val(); saveSettings(); });
+  $('#imagegen_ed_bg').val(s.edBg).on('input', function () { settings().edBg = $(this).val(); saveSettings(); });
+  $('#imagegen_ed_pose').val(s.edPose).on('input', function () { settings().edPose = $(this).val(); saveSettings(); });
+  $('#imagegen_ed_hair').val(s.edHair).on('input', function () { settings().edHair = $(this).val(); saveSettings(); });
   $('#imagegen_userid').val(s.userId).on('input', function () { settings().userId = $(this).val(); saveSettings(); });
   $('#imagegen_data').val(s.data).on('input', function () { settings().data = $(this).val(); saveSettings(); });
   $('#imagegen_addref').on('click', function () { settings().refs.push({ name: '', url: '' }); saveSettings(); renderRefs(); });
