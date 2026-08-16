@@ -198,10 +198,12 @@ async function callWriter(prose) {
 
 // ── вставка markdown-картинки ИНЛАЙН в текст сообщения ──
 function mdImage(url, caption) {
-  // width-атрибут переживает санитайзер ST (класс/style/div — режет). Размер задаём им, без CSS.
-  const cap = String(caption || '').replace(/[<>*]/g, '').trim();
-  let h = '<img src="' + url + '" width="330" alt="">';
-  if (cap) h += '<br><em>' + cap + '</em>';
+  // Инлайн-style: санитайзер ST его сохраняет (на нём держится вся разметка в сообщениях).
+  const cap = String(caption || '').replace(/[<>]/g, '').trim();
+  let h = '<div style="max-width:340px;margin:12px auto;padding:8px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.2);border-radius:12px;box-shadow:0 3px 12px rgba(0,0,0,.4);">';
+  h += '<img src="' + url + '" width="320" style="display:block;width:100%;height:auto;border-radius:8px;" alt="">';
+  if (cap) h += '<div style="margin-top:6px;font-size:.85em;opacity:.85;text-align:center;font-style:italic;">' + cap + '</div>';
+  h += '</div>';
   return h;
 }
 function firstSentence(text) {
@@ -216,10 +218,18 @@ function insertInline(mesId, message, mdOrReplaceFull, url, caption, replaceFull
   if (replaceFull) {
     mes = mes.replace(replaceFull, img); // marker-режим: заменяем маркер
   } else {
-    // auto: вставить после первого прозаического абзаца
+    // auto: вставить после первого прозаического абзаца — ПОСЛЕ </think> и мимо тегов/ярлыков ризонинга
+    const hasThink = /<think>/i.test(mes);
     const blocks = mes.split(/\n\s*\n/);
+    let passedThink = !hasThink;
+    const isProse = function (b) { return b && !/^[\[<]/.test(b) && !/^[A-ZА-Я][A-ZА-Я _\-]{1,20}:/.test(b); };
     let idx = -1;
-    for (let i = 0; i < blocks.length; i++) { const b = blocks[i].trim(); if (b && !/^[\[<]/.test(b)) { idx = i; break; } }
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i].trim();
+      if (!passedThink) { if (/<\/think>/i.test(b)) passedThink = true; continue; }
+      if (isProse(b)) { idx = i; break; }
+    }
+    if (idx < 0) { for (let i = 0; i < blocks.length; i++) { if (isProse(blocks[i].trim())) { idx = i; break; } } }
     if (idx < 0) idx = blocks.length - 1;
     blocks.splice(idx + 1, 0, img);
     mes = blocks.join('\n\n');
