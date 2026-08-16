@@ -24,6 +24,11 @@ const MODELS = {
   pollinations: ['flux', 'zimage', 'klein', 'kontext', 'gptimage', 'gptimage-large', 'gpt-image-2', 'nova-canvas']
 };
 
+// Пресеты стилей (выпадающий список). Полный официальный список подставим позже — сейчас известные.
+const STYLES = [
+  'y2k_cellphone', 'kodak_portra_400', 'photorealistic', 'cinematic', 'anime', 'soft_film', 'flash_photo'
+];
+
 const DEFAULTS = {
   enabled: true,
   mode: 'auto',        // 'auto' | 'marker'
@@ -183,8 +188,17 @@ async function callWriter(prose) {
 
 // ── вставка markdown-картинки ИНЛАЙН в текст сообщения ──
 function mdImage(url, caption) {
-  // HTML-картинка с классом + width — чтобы задать размер (markdown размер не умеет).
-  return '<img class="imagegen-inline" width="320" src="' + url + '" title="' + String(caption || '').replace(/"/g, '') + '" alt="">';
+  // Рамка (figure) + опциональная подпись под картинкой.
+  const cap = String(caption || '').replace(/[<>]/g, '').trim();
+  let h = '<div class="imagegen-fig"><img class="imagegen-inline" src="' + url + '" alt="">';
+  if (cap) h += '<div class="imagegen-cap">' + cap + '</div>';
+  h += '</div>';
+  return h;
+}
+function firstSentence(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  const m = t.match(/^.{5,120}?[.!?…]/);
+  return (m ? m[0] : t.slice(0, 110)).trim();
 }
 function insertInline(mesId, message, mdOrReplaceFull, url, caption, replaceFull) {
   const c = ctx();
@@ -259,7 +273,7 @@ async function handleMessage(mesId) {
     if (!eng) throw new Error('пустой промпт от райтера');
     const chars = charsFromText(prose);
     const url = await generateFor(eng, chars);
-    insertInline(mesId, message, null, url, '', null);
+    insertInline(mesId, message, null, url, firstSentence(prose), null);
   } catch (e) { toast('Ошибка: ' + (e.message || e) + ' — см. отчёт', 'error'); }
 }
 
@@ -272,6 +286,14 @@ function populateModels() {
   list.forEach(function (m) { sel.append('<option value="' + esc(m) + '">' + esc(m) + '</option>'); });
   if (list.indexOf(s.model) < 0) { s.model = list[0]; saveSettings(); }
   sel.val(s.model);
+}
+function populateStyles() {
+  const s = settings();
+  const sel = $('#imagegen_style_sel'); sel.empty();
+  STYLES.forEach(function (v) { sel.append('<option value="' + esc(v) + '">' + esc(v) + '</option>'); });
+  sel.append('<option value="__custom__">— свой стиль —</option>');
+  if (STYLES.indexOf(s.style) >= 0) { sel.val(s.style); $('#imagegen_style_custom').hide(); }
+  else { sel.val('__custom__'); $('#imagegen_style_custom').val(s.style).show(); }
 }
 function renderRefs() {
   const s = settings();
@@ -317,7 +339,8 @@ function injectSettingsUI() {
         <label>Модель</label>
         <select id="imagegen_model" class="text_pole"></select>
         <label>Стиль</label>
-        <input id="imagegen_style" class="text_pole" type="text">
+        <select id="imagegen_style_sel" class="text_pole"></select>
+        <input id="imagegen_style_custom" class="text_pole" type="text" placeholder="свой стиль (текстом)" style="display:none;margin-top:4px;">
         <label>userId (для кэша)</label>
         <input id="imagegen_userid" class="text_pole" type="text">
         <label>DATA (зашифрованные ключи — кнопка «📋 DATA» на сайте)</label>
@@ -326,11 +349,6 @@ function injectSettingsUI() {
         <label><b>Персонажи (рефы)</b> — их имена в тексте → подставится фото</label>
         <div id="imagegen_refs"></div>
         <div class="menu_button" id="imagegen_addref" style="margin-top:4px;">+ добавить персонажа</div>
-        <hr>
-        <label>Прокси (baseUrl)</label>
-        <input id="imagegen_baseurl" class="text_pole" type="text">
-        <label>Промпт-райтер (URL)</label>
-        <input id="imagegen_writerurl" class="text_pole" type="text">
         <hr>
         <label>Отчёт о последней ошибке</label>
         <textarea id="imagegen_lasterror" class="text_pole" rows="6" readonly></textarea>
@@ -343,13 +361,17 @@ function injectSettingsUI() {
   $('#imagegen_enabled').prop('checked', s.enabled).on('input', function () { settings().enabled = $(this).prop('checked'); saveSettings(); });
   $('#imagegen_mode').val(s.mode).on('change', function () { settings().mode = $(this).val(); saveSettings(); });
   $('#imagegen_every').val(String(s.autoEvery)).on('change', function () { settings().autoEvery = parseInt($(this).val(), 10) || 1; saveSettings(); });
-  $('#imagegen_provider').val(s.provider).on('change', function () { const p = $(this).val(); settings().provider = p; if (BASE_URLS[p]) { settings().baseUrl = BASE_URLS[p]; $('#imagegen_baseurl').val(BASE_URLS[p]); } saveSettings(); populateModels(); });
+  $('#imagegen_provider').val(s.provider).on('change', function () { const p = $(this).val(); settings().provider = p; if (BASE_URLS[p]) settings().baseUrl = BASE_URLS[p]; saveSettings(); populateModels(); });
   $('#imagegen_model').on('change', function () { settings().model = $(this).val(); saveSettings(); });
-  $('#imagegen_style').val(s.style).on('input', function () { settings().style = $(this).val(); saveSettings(); });
+  $('#imagegen_style_sel').on('change', function () {
+    const v = $(this).val();
+    if (v === '__custom__') { $('#imagegen_style_custom').show().focus(); settings().style = $('#imagegen_style_custom').val() || ''; }
+    else { $('#imagegen_style_custom').hide(); settings().style = v; }
+    saveSettings();
+  });
+  $('#imagegen_style_custom').on('input', function () { settings().style = $(this).val(); saveSettings(); });
   $('#imagegen_userid').val(s.userId).on('input', function () { settings().userId = $(this).val(); saveSettings(); });
   $('#imagegen_data').val(s.data).on('input', function () { settings().data = $(this).val(); saveSettings(); });
-  $('#imagegen_baseurl').val(s.baseUrl).on('input', function () { settings().baseUrl = $(this).val(); saveSettings(); });
-  $('#imagegen_writerurl').val(s.writerUrl).on('input', function () { settings().writerUrl = $(this).val(); saveSettings(); });
   $('#imagegen_addref').on('click', function () { settings().refs.push({ name: '', url: '' }); saveSettings(); renderRefs(); });
   $('#imagegen_lasterror').val(s.lastError);
   $('#imagegen_copyerr').on('click', function () {
@@ -358,7 +380,7 @@ function injectSettingsUI() {
     try { navigator.clipboard.writeText(t).then(function () { toast('Скопировано'); }, function () { $('#imagegen_lasterror').focus().select(); }); }
     catch (e) { $('#imagegen_lasterror').focus().select(); }
   });
-  populateModels(); renderRefs();
+  populateModels(); populateStyles(); renderRefs();
 }
 
 // ── slash-команды ──
@@ -393,7 +415,13 @@ jQuery(async function () {
   const c = ctx();
   if (!c) { console.error('[ImageGen] SillyTavern.getContext недоступен'); return; }
   settings();
-  try { $('head').append('<style>.imagegen-inline{max-width:340px;max-height:62vh;width:auto !important;height:auto;border-radius:10px;display:block;margin:10px auto;cursor:pointer;}</style>'); } catch (e) {}
+  try {
+    $('head').append('<style>'
+      + '.imagegen-fig{max-width:340px;margin:12px auto;padding:8px 8px 6px;background:var(--SmartThemeBlurTintColor,rgba(0,0,0,.18));border:1px solid var(--SmartThemeBorderColor,rgba(255,255,255,.18));border-radius:12px;box-shadow:0 3px 12px rgba(0,0,0,.4);}'
+      + '.imagegen-inline{display:block;width:100%;height:auto;max-height:60vh;object-fit:cover;border-radius:8px;cursor:pointer;}'
+      + '.imagegen-cap{margin-top:6px;font-size:.85em;line-height:1.3;opacity:.85;text-align:center;font-style:italic;}'
+      + '</style>');
+  } catch (e) {}
   try { injectSettingsUI(); } catch (e) { console.error('[ImageGen] settings UI:', e); }
   try { registerCommands(); } catch (e) { console.error('[ImageGen] commands:', e); }
   try { c.eventSource.on(c.eventTypes.CHARACTER_MESSAGE_RENDERED, handleMessage); }
