@@ -19,7 +19,7 @@ const BASE_URLS = {
   pollinations: 'https://pollinations-tavo.vercel.app/api/generate'
 };
 const MODELS = {
-  link: ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview', 'gemini-3-pro-image', 'gemini-2.5-flash-image', 'pro/gemini-3.1-flash-image-preview', 'pro/gemini-3-pro-image-preview', 'pro/gemini-2.5-flash-image', 'gpt-image-2', 'gpt-image-2-c'],
+  link: ['gemini-3.1-flash-image-preview', 'gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3-pro-image-preview', 'gemini-3-pro-image', 'gpt-image-2-c', 'gpt-image-2'],
   naistera: ['flux', 'flux-realism', 'flux-anime', 'flux-3d', 'sdxl', 'sd-3.5-large'],
   pollinations: ['flux', 'zimage', 'klein', 'kontext', 'gptimage', 'gptimage-large', 'gpt-image-2', 'nova-canvas']
 };
@@ -397,13 +397,18 @@ function populateModels() {
   if (list.indexOf(s.model) < 0) { s.model = list[0]; saveSettings(); }
   sel.val(s.model);
 }
+function updateStyleCount() {
+  const n = ($('#imagegen_style_custom').val() || '').length;
+  $('#imagegen_style_count').text(n + '/1000');
+}
 function populateStyles() {
   const s = settings();
   const sel = $('#imagegen_style_sel'); sel.empty();
   STYLES.forEach(function (v) { sel.append('<option value="' + esc(v) + '">' + esc(v) + '</option>'); });
   sel.append('<option value="__custom__">— свой стиль —</option>');
-  if (STYLES.indexOf(s.style) >= 0) { sel.val(s.style); $('#imagegen_style_custom').hide(); }
-  else { sel.val('__custom__'); $('#imagegen_style_custom').val(s.style).show(); }
+  const custom = STYLES.indexOf(s.style) < 0;
+  if (!custom) { sel.val(s.style); $('#imagegen_style_custom, #imagegen_style_count').hide(); }
+  else { sel.val('__custom__'); $('#imagegen_style_custom').val(s.style).show(); $('#imagegen_style_count').show(); updateStyleCount(); }
 }
 function renderRefs() {
   const s = settings();
@@ -449,7 +454,8 @@ function injectSettingsUI() {
         <select id="imagegen_model" class="text_pole"></select>
         <label>Стиль</label>
         <select id="imagegen_style_sel" class="text_pole"></select>
-        <input id="imagegen_style_custom" class="text_pole" type="text" placeholder="свой стиль (текстом)" style="display:none;margin-top:4px;">
+        <textarea id="imagegen_style_custom" class="text_pole" rows="2" maxlength="1000" placeholder="свой стиль (до 1000 символов)" style="display:none;margin-top:4px;"></textarea>
+        <div id="imagegen_style_count" style="display:none;font-size:.8em;opacity:.6;text-align:right;">0/1000</div>
         <label>userId (для кэша)</label>
         <input id="imagegen_userid" class="text_pole" type="text">
         <label>DATA (зашифрованные ключи — кнопка «📋 DATA» на сайте)</label>
@@ -481,11 +487,11 @@ function injectSettingsUI() {
   $('#imagegen_model').on('change', function () { settings().model = $(this).val(); saveSettings(); });
   $('#imagegen_style_sel').on('change', function () {
     const v = $(this).val();
-    if (v === '__custom__') { $('#imagegen_style_custom').show().focus(); settings().style = $('#imagegen_style_custom').val() || ''; }
-    else { $('#imagegen_style_custom').hide(); settings().style = v; }
+    if (v === '__custom__') { $('#imagegen_style_custom, #imagegen_style_count').show(); $('#imagegen_style_custom').focus(); settings().style = $('#imagegen_style_custom').val() || ''; updateStyleCount(); }
+    else { $('#imagegen_style_custom, #imagegen_style_count').hide(); settings().style = v; }
     saveSettings();
   });
-  $('#imagegen_style_custom').on('input', function () { settings().style = $(this).val(); saveSettings(); });
+  $('#imagegen_style_custom').on('input', function () { settings().style = ($(this).val() || '').slice(0, 1000); saveSettings(); updateStyleCount(); });
   $('#imagegen_ed_bg').val(s.edBg).on('input', function () { settings().edBg = $(this).val(); saveSettings(); });
   $('#imagegen_ed_pose').val(s.edPose).on('input', function () { settings().edPose = $(this).val(); saveSettings(); });
   $('#imagegen_ed_hair').val(s.edHair).on('input', function () { settings().edHair = $(this).val(); saveSettings(); });
